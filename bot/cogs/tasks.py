@@ -24,7 +24,40 @@ class TaskView(discord.ui.View):
     @discord.ui.button(label="Edit", style=discord.ButtonStyle.primary, emoji="✏️")
     async def edit_task(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Edit task button."""
+        # Fetch the current task data
+        task = await TaskService.get_task_by_id(self.task_id)
+        if not task:
+            await interaction.response.send_message(
+                "❌ Task not found.",
+                ephemeral=True
+            )
+            return
+            
+        # Create the modal
         modal = EditTaskModal(self.task_id)
+        
+        # Pre-fill the modal fields with existing task data
+        modal.task_title.default = task.title
+        
+        if task.description:
+            modal.description.default = task.description
+            
+        if task.priority:
+            modal.priority.default = task.priority
+            
+        if task.due_date:
+            modal.due_date.default = task.due_date.strftime("%Y-%m-%d")
+            
+        if task.assignees:
+            # Format the assignees as mentions
+            mentions = []
+            for user in task.assignees:
+                mentions.append(f"<@{user.discord_id}>")
+            assignee_mentions = " ".join(mentions)
+            if len(assignee_mentions) <= 500:  # Max length for TextInput
+                modal.assignees.default = assignee_mentions
+        
+        # Send the modal
         await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="Complete", style=discord.ButtonStyle.success, emoji="✅")
@@ -153,14 +186,104 @@ class CreateTaskModal(discord.ui.Modal, title="Create New Task"):
 class EditTaskModal(discord.ui.Modal, title="Edit Task"):
     """Modal for editing existing tasks."""
     
+    task_title = discord.ui.TextInput(
+        label="Task Title",
+        placeholder="Enter task title...",
+        required=True,
+        max_length=300
+    )
+    
+    description = discord.ui.TextInput(
+        label="Description",
+        placeholder="Enter task description...",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=2000
+    )
+    
+    priority = discord.ui.TextInput(
+        label="Priority",
+        placeholder="low, medium, high, urgent",
+        required=False,
+        max_length=10
+    )
+    
+    due_date = discord.ui.TextInput(
+        label="Due Date",
+        placeholder="YYYY-MM-DD or leave empty",
+        required=False,
+        max_length=20
+    )
+    
+    assignees = discord.ui.TextInput(
+        label="Assignees",
+        placeholder="@user1 @user2 or leave empty",
+        required=False,
+        max_length=500
+    )
+    
     def __init__(self, task_id: int):
         super().__init__()
         self.task_id = task_id
+        # Populate fields will be handled in callback before the modal is shown
     
     async def on_submit(self, interaction: discord.Interaction):
         """Handle modal submission."""
-        # Implementation similar to CreateTaskModal but for updates
-        await interaction.response.send_message("Task editing functionality coming soon!", ephemeral=True)
+        try:
+            # Parse priority
+            priority = None
+            if self.priority.value:
+                priority = self.priority.value.lower()
+                if priority not in [p.value for p in TaskPriority]:
+                    priority = None
+            
+            # Parse due date
+            due_date = None
+            if self.due_date.value:
+                try:
+                    date_str = self.due_date.value
+                    due_date = datetime.strptime(date_str, "%Y-%m-%d")
+                    due_date = due_date.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    await interaction.response.send_message(
+                        "❌ Invalid due date format. Use YYYY-MM-DD.",
+                        ephemeral=True
+                    )
+                    return
+            
+            # Parse assignees
+            if self.assignees.value:
+                import re
+                mentions = re.findall(r'<@!?(\d+)>', self.assignees.value)
+                if mentions:
+                    assignee_discord_ids = [int(uid) for uid in mentions]
+                    # Update task assignees
+                    await TaskService.assign_users_to_task(
+                        task_id=self.task_id,
+                        user_discord_ids=assignee_discord_ids
+                    )
+            
+            # Update task
+            task = await TaskService.update_task(
+                task_id=self.task_id,
+                title=self.task_title.value,
+                description=self.description.value,
+                priority=priority,
+                due_date=due_date
+            )
+            
+            if task:
+                embed = create_task_embed(task)
+                view = TaskView(task.id)
+                await interaction.response.edit_message(embed=embed, view=view)
+            else:
+                msg = "❌ Failed to update task."
+                await interaction.response.send_message(msg, ephemeral=True)
+        
+        except Exception as e:
+            logger.error(f"Error updating task: {e}", exc_info=True)
+            error_msg = f"❌ Error updating task: {str(e)}"
+            await interaction.response.send_message(error_msg, ephemeral=True)
 
 
 def create_task_embed(task) -> discord.Embed:

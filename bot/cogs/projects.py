@@ -14,6 +14,88 @@ from models import TaskStatus
 logger = logging.getLogger(__name__)
 
 
+class ProjectView(discord.ui.View):
+    """Interactive view for project management."""
+    
+    def __init__(self, project_id: int):
+        super().__init__(timeout=300)
+        self.project_id = project_id
+    
+    @discord.ui.button(label="View Tasks", style=discord.ButtonStyle.primary, emoji="📋")
+    async def view_tasks(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """View project tasks."""
+        project = await ProjectService.get_project_by_id(self.project_id)
+        if not project:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+            
+        tasks = await TaskService.get_tasks_for_project(self.project_id)
+        
+        if not tasks:
+            await interaction.response.send_message(
+                f"📝 No tasks found for project '{project.name}'.",
+                ephemeral=True
+            )
+            return
+            
+        # Create embed with task list
+        embed = discord.Embed(
+            title=f"📋 Tasks for {project.name}",
+            color=int(project.color.replace('#', ''), 16) if project.color else 0x3498db,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        for task in tasks[:10]:  # Limit to 10 tasks
+            status_emoji = "✅" if task.status == TaskStatus.DONE.value else "⏳"
+            due_text = ""
+            if task.due_date:
+                due_text = f" (Due: <t:{int(task.due_date.timestamp())}:d>)"
+            
+            embed.add_field(
+                name=f"{status_emoji} {task.title}",
+                value=f"ID: {task.id} | Status: {task.status.replace('_', ' ').title()}{due_text}",
+                inline=False
+            )
+        
+        if len(tasks) > 10:
+            embed.set_footer(text=f"Showing 10 of {len(tasks)} tasks")
+            
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.ui.button(label="Members", style=discord.ButtonStyle.success, emoji="👥")
+    async def manage_members(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Manage project members button."""
+        project = await ProjectService.get_project_by_id(self.project_id)
+        if not project:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+            
+        # Create embed with member list
+        embed = discord.Embed(
+            title=f"👥 Members of {project.name}",
+            color=int(project.color.replace('#', ''), 16) if project.color else 0x3498db,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        if project.members:
+            for member in project.members:
+                embed.add_field(
+                    name=member.username,
+                    value=f"<@{member.discord_id}>",
+                    inline=True
+                )
+        else:
+            embed.description = "No members in this project."
+            
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+    @discord.ui.button(label="Add Member", style=discord.ButtonStyle.secondary, emoji="👤")
+    async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Add member to project."""
+        modal = AddMemberModal(self.project_id)
+        await interaction.response.send_modal(modal)
+
+
 class CreateProjectModal(discord.ui.Modal, title="Create New Project"):
     """Modal for creating new projects."""
     
@@ -76,7 +158,7 @@ def create_project_embed(project) -> discord.Embed:
     """Create Discord embed for a project."""
     try:
         color = int(project.color.replace('#', ''), 16)
-    except:
+    except Exception:  # Use specific exception instead of bare except
         color = 0x3498db
     
     embed = discord.Embed(
@@ -97,12 +179,19 @@ def create_project_embed(project) -> discord.Embed:
     # Task statistics
     if project.tasks:
         total_tasks = len(project.tasks)
-        completed_tasks = len([t for t in project.tasks if t.status == TaskStatus.DONE.value])
-        in_progress_tasks = len([t for t in project.tasks if t.status == TaskStatus.IN_PROGRESS.value])
+        # Split long lines for better readability
+        completed_tasks = len([t for t in project.tasks 
+                              if t.status == TaskStatus.DONE.value])
+        in_progress_tasks = len([t for t in project.tasks 
+                                if t.status == TaskStatus.IN_PROGRESS.value])
+        
+        task_stats = f"Total: {total_tasks}\n"
+        task_stats += f"Completed: {completed_tasks}\n"
+        task_stats += f"In Progress: {in_progress_tasks}"
         
         embed.add_field(
             name="Tasks",
-            value=f"Total: {total_tasks}\nCompleted: {completed_tasks}\nIn Progress: {in_progress_tasks}",
+            value=task_stats,
             inline=True
         )
     else:
@@ -124,77 +213,6 @@ def create_project_embed(project) -> discord.Embed:
     embed.set_footer(text=f"Project ID: {project.id}")
     
     return embed
-
-
-class ProjectView(discord.ui.View):
-    """Interactive view for project management."""
-    
-    def __init__(self, project_id: int):
-        super().__init__(timeout=300)
-        self.project_id = project_id
-    
-    @discord.ui.button(label="View Tasks", style=discord.ButtonStyle.primary, emoji="📋")
-    async def view_tasks(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """View project tasks."""
-        tasks = await TaskService.get_tasks_for_project(self.project_id)
-        
-        if not tasks:
-            await interaction.response.send_message(
-                "📝 This project has no tasks yet.",
-                ephemeral=True
-            )
-            return
-        
-        # Create embed with task list
-        embed = discord.Embed(
-            title=f"📋 Project Tasks",
-            color=0x3498db,
-            timestamp=datetime.now(timezone.utc)
-        )
-        
-        for task in tasks[:10]:  # Limit to 10 tasks
-            status_emoji = "✅" if task.status == TaskStatus.DONE.value else "⏳"
-            assignee_text = ""
-            if task.assignees:
-                assignee_text = f" | Assigned to: {', '.join([f'<@{u.discord_id}>' for u in task.assignees[:2]])}"
-            
-            embed.add_field(
-                name=f"{status_emoji} {task.title}",
-                value=f"ID: {task.id} | Status: {task.status.replace('_', ' ').title()}{assignee_text}",
-                inline=False
-            )
-        
-        if len(tasks) > 10:
-            embed.set_footer(text=f"Showing 10 of {len(tasks)} tasks")
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    
-    @discord.ui.button(label="Add Member", style=discord.ButtonStyle.secondary, emoji="👤")
-    async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Add member to project."""
-        modal = AddMemberModal(self.project_id)
-        await interaction.response.send_modal(modal)
-    
-    @discord.ui.button(label="Project Info", style=discord.ButtonStyle.secondary, emoji="ℹ️")
-    async def project_info(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Show detailed project information."""
-        project = await ProjectService.get_project_by_id(self.project_id)
-        if not project:
-            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
-            return
-        
-        embed = create_project_embed(project)
-        
-        # Add members list if any
-        if project.members:
-            member_mentions = [f"<@{user.discord_id}>" for user in project.members[:10]]
-            embed.add_field(
-                name="Project Members",
-                value=", ".join(member_mentions),
-                inline=False
-            )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class AddMemberModal(discord.ui.Modal, title="Add Project Member"):
@@ -257,12 +275,15 @@ class AddMemberModal(discord.ui.Modal, title="Add Project Member"):
 
 
 class ProjectsCog(commands.Cog):
-    """Commands for project management."""
+    """Cog for project management commands."""
     
     def __init__(self, bot):
         self.bot = bot
-    
-    @app_commands.command(name="create-project", description="Create a new project")
+        
+    @app_commands.command(
+        name="create-project", 
+        description="Create a new project"
+    )
     @app_commands.describe(
         name="Project name",
         description="Project description",
@@ -271,11 +292,17 @@ class ProjectsCog(commands.Cog):
     async def create_project(
         self,
         interaction: discord.Interaction,
-        name: str,
+        name: Optional[str] = None,
         description: Optional[str] = None,
         color: Optional[str] = None
     ):
         """Create a new project via slash command."""
+        # If name is not provided, show the modal
+        if name is None:
+            modal = CreateProjectModal()
+            await interaction.response.send_modal(modal)
+            return
+        
         try:
             # Validate color
             if color and (not color.startswith('#') or len(color) != 7):
@@ -292,7 +319,10 @@ class ProjectsCog(commands.Cog):
             )
             
             # Add creator as member
-            await ProjectService.add_member_to_project(project.id, interaction.user.id)
+            await ProjectService.add_member_to_project(
+                project.id, 
+                interaction.user.id
+            )
             
             # Create embed and view
             embed = create_project_embed(project)
