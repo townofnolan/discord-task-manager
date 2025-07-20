@@ -1,5 +1,5 @@
 """Bot package initialization."""
 
-from .main import bot, main
+from .main import main
 
-__all__ = ["bot", "main"]
+__all__ = ["main"]

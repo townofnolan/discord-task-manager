@@ -23,18 +23,24 @@ class TaskManagerBot(commands.Bot):
         intents.guilds = True
         intents.members = True
 
-        # Set up both "/" and "pp" as prefixes
-        prefixes = [settings.bot_prefix, "/"]
-        # Also include case variations
-        prefixes += [p.lower() for p in prefixes] + [p.upper() for p in prefixes]
+        # Process application ID properly
+        app_id = None
+        if settings.discord_application_id:
+            try:
+                app_id = int(settings.discord_application_id)
+                logger.info(f"Using application ID: {app_id}")
+            except ValueError:
+                logger.error(
+                    f"Invalid application ID format: {settings.discord_application_id}"
+                )
 
+        # Only use slash commands - no prefix needed
         super().__init__(
-            command_prefix=commands.when_mentioned_or(*prefixes),
+            command_prefix=commands.when_mentioned,  # Only respond when mentioned
             intents=intents,
             description="Discord Task Manager",
             case_insensitive=True,
-            # Use application ID if provided, else None
-            application_id=settings.discord_application_id,
+            application_id=app_id,  # This must be an int or None
         )
 
         # Set up event for when the bot is ready
@@ -72,29 +78,125 @@ class TaskManagerBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Failed to load extension {extension}: {e}")
 
+    async def copy_global_to_guild(self, guild_id):
+        """Copy all commands to a specific guild to ensure they appear."""
+        try:
+            guild = self.get_guild(guild_id)
+            if not guild:
+                logger.error(f"Could not find guild with ID {guild_id}")
+                return False
+
+            # First clear any existing commands in the guild
+            self.tree.clear_commands(guild=guild)
+            logger.info(f"Cleared existing commands for guild {guild.name}")
+
+            # Sync the cleared state to ensure we start fresh
+            await self.tree.sync(guild=guild)
+
+            # Now sync globally to get all commands
+            global_commands = await self.tree.sync()
+            logger.info(f"Synced {len(global_commands)} commands globally")
+
+            # Force a sync specifically for this guild which should copy global commands
+            guild_commands = await self.tree.sync(guild=guild)
+            logger.info(f"Synced {len(guild_commands)} commands for guild {guild.name}")
+
+            # Let's try one more thing - register via app_commands
+            try:
+                # Register all commands in app_commands namespace directly to guild
+                from discord import app_commands
+
+                logger.info(f"Using app_commands.CommandTree for {guild.name}")
+
+                # Create a fresh command tree for this guild only
+                guild_tree = app_commands.CommandTree(self)
+
+                # Copy all our commands to the new tree
+                for command in self.tree.get_commands():
+                    guild_tree.add_command(command)
+                    logger.info(f"Added {command.name} to guild tree")
+
+                # Sync this tree specifically to the guild
+                await guild_tree.sync(guild=guild)
+                logger.info(f"Synced guild tree to {guild.name}")
+
+            except Exception as e:
+                logger.error(f"Error during app_commands direct sync: {e}")
+
+            return True
+        except Exception as e:
+            logger.error(f"Error copying commands to guild {guild_id}: {e}")
+            return False
+
     def register_core_commands(self):
         """Register core bot commands directly in the command tree."""
 
-        @self.tree.command(name="ping", description="Check if the bot is responsive")
-        async def ping_command(interaction: discord.Interaction):
-            await interaction.response.send_message("Pong! 🏓")
-
         @self.tree.command(name="help", description="Show help information for the bot")
         async def help_command(interaction: discord.Interaction):
-            # Create a help embed similar to send_formatted_help
+            # Create a help embed
             embed = discord.Embed(
                 title="Discord Task Manager Help",
-                description="Use these commands to manage tasks.",
+                description="Use these slash commands to manage tasks and projects.",
                 color=0x3498DB,
             )
-            # Add basic help info
-            embed.add_field(
-                name="Commands",
-                value="• `/create-task` - Create a new task\n"
-                "• `/task` - View a task\n"
-                "• `/my-tasks` - View your tasks",
-                inline=False,
-            )
+
+            # Get all commands from the bot's command tree
+            commands = await self.tree.fetch_commands()
+
+            # Create command categories
+            categories = {
+                "Tasks": [],
+                "Projects": [],
+                "Time Tracking": [],
+                "Calendar": [],
+                "Admin": [],
+                "General": [],
+            }
+
+            # Categorize commands
+            for cmd in commands:
+                # Check for task related commands
+                if (
+                    cmd.name.startswith("task")
+                    or cmd.name.endswith("task")
+                    or "task" in cmd.name
+                ):
+                    categories["Tasks"].append(cmd)
+                # Check for project related commands
+                elif (
+                    cmd.name.startswith("project")
+                    or cmd.name.endswith("project")
+                    or "project" in cmd.name
+                ):
+                    categories["Projects"].append(cmd)
+                # Check for time tracking commands
+                elif "time" in cmd.name:
+                    categories["Time Tracking"].append(cmd)
+                # Check for calendar commands
+                elif "calendar" in cmd.name or "event" in cmd.name:
+                    categories["Calendar"].append(cmd)
+                # Check for admin commands
+                elif cmd.name in ["admin", "settings", "config"]:
+                    categories["Admin"].append(cmd)
+                # Default category
+                else:
+                    categories["General"].append(cmd)
+
+            # Add each category to the embed
+            for category, cmds in categories.items():
+                if cmds:
+                    # Format command list with descriptions
+                    commands_text = "\n".join(
+                        [f"• `/{cmd.name}` - {cmd.description}" for cmd in cmds]
+                    )
+                    # Add to embed
+                    embed.add_field(
+                        name=f"{category} Commands", value=commands_text, inline=False
+                    )
+
+            # Add footer with additional info
+            embed.set_footer(text="All commands are available as slash commands (/)")
+
             await interaction.response.send_message(embed=embed)
 
     async def on_ready(self):
@@ -109,36 +211,86 @@ class TaskManagerBot(commands.Bot):
             )
             await self.change_presence(activity=activity)
 
-            # Register core commands and sync all commands with Discord
+            # Sync all commands with Discord
             if not self.initial_sync_done:
-                # Register core commands
-                self.register_core_commands()
-
                 # Log application info for debugging
                 logger.info(f"Bot Application ID: {self.application_id}")
 
-                # Sync the commands with Discord for all connected guilds
-                try:
-                    # First, sync globally
-                    logger.info("Attempting to sync commands globally...")
-                    global_commands = await self.tree.sync()
-                    logger.info(f"Synced {len(global_commands)} commands globally")
+                # Get Discord guild ID from settings
+                from config import settings
 
-                    # Then sync to each guild individually to ensure they appear
-                    for guild in self.guilds:
+                guild_id = settings.discord_guild_id
+
+                try:
+                    logger.info("===== STARTING COMMAND SYNC PROCESS =====")
+
+                    # First, sync globally
+                    global_commands = await self.tree.sync()
+                    logger.info(f"1. Synced {len(global_commands)} commands globally")
+
+                    # Get the list of currently available commands to debug
+                    logger.info("2. Available commands in tree:")
+                    for cmd in self.tree.get_commands():
+                        logger.info(f"   - Command: {cmd.name}")
+
+                    # Process the main guild if configured
+                    if guild_id:
                         try:
-                            guild_commands = await self.tree.sync(guild=guild)
+                            # Convert to int if needed
+                            guild_id_int = int(guild_id)
+                            main_guild = self.get_guild(guild_id_int)
+
+                            if main_guild:
+                                logger.info(
+                                    f"3. Syncing to main guild: {main_guild.name} ({guild_id_int})"
+                                )
+
+                                # Use our special function
+                                await self.copy_global_to_guild(guild_id_int)
+
+                                # Double-check the guild commands after sync
+                                guild_commands = await self.tree.sync(guild=main_guild)
+                                logger.info(
+                                    f"4. Main guild now has {len(guild_commands)} commands"
+                                )
+                            else:
+                                logger.warning(
+                                    f"3. Main guild with ID {guild_id_int} not found"
+                                )
+                        except ValueError:
+                            logger.error(f"Invalid guild ID format: {guild_id}")
+                    else:
+                        logger.warning("3. No main guild ID configured in settings")
+
+                    # For each other guild, also sync directly
+                    logger.info("5. Syncing to all connected guilds:")
+                    for guild in self.guilds:
+                        # Skip if this is the main guild we already processed
+                        if guild_id and int(guild_id) == guild.id:
                             logger.info(
-                                f"Synced {len(guild_commands)} commands for guild: "
-                                f"{guild.name} (ID: {guild.id})"
+                                f"   - Skipping main guild {guild.name} (already processed)"
                             )
+                            continue
+
+                        try:
+                            logger.info(
+                                f"   - Syncing to guild: {guild.name} ({guild.id})"
+                            )
+                            guild_commands = await self.tree.sync(guild=guild)
+                            logger.info(f"     Synced {len(guild_commands)} commands")
                         except Exception as e:
                             logger.error(
-                                f"Failed to sync commands for guild {guild.name}: {e}"
+                                f"     Failed to sync to guild {guild.name}: {e}"
                             )
 
                     self.initial_sync_done = True
-                    logger.info("Slash commands synchronization complete")
+                    logger.info("===== COMMAND SYNC PROCESS COMPLETE =====")
+
+                    # Final report - check global commands one more time
+                    final_commands = await self.tree.fetch_commands()
+                    logger.info(
+                        f"Final check: {len(final_commands)} global commands available"
+                    )
 
                     # Verify the commands were registered
                     all_commands = await self.tree.fetch_commands()
@@ -146,6 +298,20 @@ class TaskManagerBot(commands.Bot):
                     logger.info(
                         f"Verified {len(all_commands)} global commands: {command_names}"
                     )
+
+                    # Add debug info about guild registrations
+                    logger.info("=== DEBUG: Guild Command Registration ===")
+                    for guild in self.guilds:
+                        try:
+                            guild_cmds = await self.tree.fetch_commands(guild=guild)
+                            cmd_list = ", ".join([c.name for c in guild_cmds])
+                            logger.info(
+                                f"Guild {guild.name}: {len(guild_cmds)} commands"
+                            )
+                            if guild_cmds:
+                                logger.info(f"Commands: {cmd_list}")
+                        except Exception as e:
+                            logger.error(f"Error fetching guild commands: {e}")
 
                 except Exception as e:
                     logger.error(f"Failed to sync commands: {e}", exc_info=True)
@@ -174,41 +340,23 @@ class TaskManagerBot(commands.Bot):
             await ctx.send("❌ An unexpected error occurred. Please try again later.")
 
     async def on_message(self, message):
-        """Handle message events, including showing command list for "pp " prefix."""
+        """Handle message events."""
         # Ignore messages from bots
         if message.author.bot:
             return
 
-        # Check if the message is just the prefix with a space
-        content = message.content.lower()
-        prefix = settings.bot_prefix.lower()
-
-        # If message is just prefix + space, show formatted help
-        if content.startswith(f"{prefix} ") and len(content.strip()) <= len(prefix) + 1:
-            ctx = await self.get_context(message)
-            await self.send_formatted_help(ctx)
-            # Try to delete the command message to keep the channel clean
-            try:
-                await message.delete()
-            except discord.errors.Forbidden:
-                # Bot doesn't have permission to delete messages
-                pass
+        # Only process mentions since we're now using slash commands
+        if self.user:
+            mentions = [f"<@{self.user.id}>", f"<@!{self.user.id}>"]
+            if message.content in mentions:
+                # Reply with help when the bot is mentioned
+                await message.channel.send(
+                    f"👋 Hi {message.author.mention}! I'm a task management bot. "
+                    f"Use `/help` to see available commands."
+                )
             return
 
-        # Check if this is a command message
-        ctx = await self.get_context(message)
-        if ctx.command is not None:
-            # This is a command - process it then delete the original message
-            await super().on_message(message)
-            # Try to delete the command message to keep the channel clean
-            try:
-                await message.delete()
-            except discord.errors.Forbidden:
-                # Bot doesn't have permission to delete messages
-                pass
-            return
-
-        # Not a command - just process normally
+        # Process the message normally
         await super().on_message(message)
 
     async def send_formatted_help(self, ctx):
