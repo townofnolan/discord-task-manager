@@ -2,9 +2,10 @@
 
 import logging
 from typing import AsyncGenerator
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import sessionmaker
+
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 from config.settings import settings
 from models import Base
@@ -12,24 +13,36 @@ from models import Base
 logger = logging.getLogger(__name__)
 
 # Create async engine
-async_engine = create_async_engine(
-    settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
-    echo=settings.debug,
-    future=True
-)
+if settings.database_url.startswith("sqlite"):
+    # For SQLite
+    async_engine = create_async_engine(
+        settings.database_url.replace("sqlite:///", "sqlite+aiosqlite:///"),
+        echo=settings.debug,
+        future=True,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    # For PostgreSQL
+    async_engine = create_async_engine(
+        settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
+        echo=settings.debug,
+        future=True,
+    )
 
 # Create async session maker
 AsyncSessionLocal = async_sessionmaker(
-    async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False
+    async_engine, class_=AsyncSession, expire_on_commit=False
 )
 
 # Sync engine for migrations and initial setup
-sync_engine = create_engine(
-    settings.database_url,
-    echo=settings.debug
-)
+if settings.database_url.startswith("sqlite"):
+    sync_engine = create_engine(
+        settings.database_url,
+        echo=settings.debug,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    sync_engine = create_engine(settings.database_url, echo=settings.debug)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
