@@ -105,7 +105,16 @@ class ProjectService:
     async def add_member_to_project(project_id: int, user_discord_id: int) -> bool:
         """Add a member to a project."""
         async with get_async_session() as session:
-            project = await ProjectService.get_project_by_id(project_id)
+            result = await session.execute(
+                select(Project)
+                .options(
+                    selectinload(Project.members),
+                    selectinload(Project.tasks),
+                )
+                .where(Project.id == project_id)
+            )
+            project = result.scalar_one_or_none()
+
             if not project:
                 return False
             
