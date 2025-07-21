@@ -41,23 +41,37 @@ class TimeEntryService:
             return entry
 
     @staticmethod
-    async def get_time_entries_for_user(user_id: int) -> List[TimeEntry]:
-        """Fetch all time entries for a specific user."""
+    async def get_time_entries_for_user(
+        user_id: int, limit: Optional[int] = None, offset: Optional[int] = None
+    ) -> List[TimeEntry]:
+        """Fetch time entries for a specific user with optional pagination."""
         async with get_async_session() as session:
-            result = await session.execute(
+            query = (
                 select(TimeEntry)
                 .options(selectinload(TimeEntry.task))
                 .where(TimeEntry.user_id == user_id)
             )
-            return result.scalars().all()
+            if limit is not None:
+                query = query.limit(limit)
+            if offset is not None:
+                query = query.offset(offset)
+            result = await session.execute(query)
+            return result.scalars()
 
     @staticmethod
-    async def get_time_entries_for_task(task_id: int) -> List[TimeEntry]:
-        """Fetch all time entries for a specific task."""
+    async def get_time_entries_for_task(
+        task_id: int, limit: Optional[int] = None, offset: Optional[int] = None
+    ) -> List[TimeEntry]:
+        """Fetch time entries for a specific task with optional pagination."""
         async with get_async_session() as session:
-            result = await session.execute(
+            query = (
                 select(TimeEntry)
                 .options(selectinload(TimeEntry.user))
                 .where(TimeEntry.task_id == task_id)
             )
-            return result.scalars().all()
+            if limit is not None:
+                query = query.limit(limit)
+            if offset is not None:
+                query = query.offset(offset)
+            result = await session.execute(query)
+            return result.scalars()
