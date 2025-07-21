@@ -287,7 +287,7 @@ class ColorSelect(discord.ui.Select):
         super().__init__(placeholder="Choose a color...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        view: ColorSelectView = self.view  # type: ignore
+        view = cast(ColorSelectView, self.view)
         selected_color = self.values[0]
         try:
             project = await ProjectService.create_project(
