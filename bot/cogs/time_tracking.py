@@ -8,8 +8,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from models import TimeEntry
-from services import TaskService, UserService
+from services import TaskService, UserService, TimeEntryService
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +103,15 @@ class TimeTrackingCog(commands.Cog):
             )
             return
         
-        # TODO: Save time entry to database
-        # For now, just show the summary
+        # Save time entry to the database
+        await TimeEntryService.create_time_entry(
+            task_id=task_id,
+            user_id=user_id,
+            duration_hours=duration_hours,
+            description=description,
+            start_time=start_time,
+            end_time=end_time,
+        )
         
         embed = discord.Embed(
             title="⏹️ Timer Stopped",
