@@ -333,7 +333,7 @@ class ProjectsCog(commands.Cog):
         interaction: discord.Interaction,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        color: Optional[app_commands.Choice[str]] = None
+        color: Optional[str] = None
     ):
         """Create a new project via slash command."""
         # If name is not provided, show the modal
