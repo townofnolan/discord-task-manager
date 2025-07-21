@@ -21,8 +21,10 @@ class TestProjectService:
         session_mock.execute.return_value = result_mock
         session_mock.commit = AsyncMock()
 
-        with patch("services.project_service.get_async_session") as session_cm, \
-             patch("services.project_service.UserService.get_or_create_user", new=AsyncMock(return_value=fake_user)):
+        with (
+            patch("services.project_service.get_async_session") as session_cm,
+            patch("services.project_service.UserService.get_or_create_user", new=AsyncMock(return_value=fake_user))
+        ):
             session_cm.return_value.__aenter__.return_value = session_mock
             session_cm.return_value.__aexit__.return_value = None
 
