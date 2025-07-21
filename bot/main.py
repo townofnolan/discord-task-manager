@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands
 
 from config import settings
+from services.notification_service import NotificationService
 from utils import close_database, init_database
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ class TaskManagerBot(commands.Bot):
                 logger.error(
                     f"Invalid application ID format: {settings.discord_application_id}"
                 )
+
+        # Initialize notification service
+        self.notification_service = NotificationService(self)
 
         # Only use slash commands - no prefix needed
         super().__init__(
@@ -200,121 +204,20 @@ class TaskManagerBot(commands.Bot):
             await interaction.response.send_message(embed=embed)
 
     async def on_ready(self):
-        """Called when bot is ready."""
-        if self.user:
-            logger.info(f"Bot is ready! Logged in as {self.user} (ID: {self.user.id})")
-            logger.info(f"Connected to {len(self.guilds)} guilds")
+        """Handle bot ready event."""
+        logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
+        logger.info(f"Connected to {len(self.guilds)} guilds")
 
-            # Set bot status
-            activity = discord.Activity(
-                type=discord.ActivityType.watching, name="for task management commands"
+        # Set bot status
+        await self.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching, name="your tasks | /help"
             )
-            await self.change_presence(activity=activity)
+        )
 
-            # Sync all commands with Discord
-            if not self.initial_sync_done:
-                # Log application info for debugging
-                logger.info(f"Bot Application ID: {self.application_id}")
-
-                # Get Discord guild ID from settings
-                from config import settings
-
-                guild_id = settings.discord_guild_id
-
-                try:
-                    logger.info("===== STARTING COMMAND SYNC PROCESS =====")
-
-                    # First, sync globally
-                    global_commands = await self.tree.sync()
-                    logger.info(f"1. Synced {len(global_commands)} commands globally")
-
-                    # Get the list of currently available commands to debug
-                    logger.info("2. Available commands in tree:")
-                    for cmd in self.tree.get_commands():
-                        logger.info(f"   - Command: {cmd.name}")
-
-                    # Process the main guild if configured
-                    if guild_id:
-                        try:
-                            # Convert to int if needed
-                            guild_id_int = int(guild_id)
-                            main_guild = self.get_guild(guild_id_int)
-
-                            if main_guild:
-                                logger.info(
-                                    f"3. Syncing to main guild: {main_guild.name} ({guild_id_int})"
-                                )
-
-                                # Use our special function
-                                await self.copy_global_to_guild(guild_id_int)
-
-                                # Double-check the guild commands after sync
-                                guild_commands = await self.tree.sync(guild=main_guild)
-                                logger.info(
-                                    f"4. Main guild now has {len(guild_commands)} commands"
-                                )
-                            else:
-                                logger.warning(
-                                    f"3. Main guild with ID {guild_id_int} not found"
-                                )
-                        except ValueError:
-                            logger.error(f"Invalid guild ID format: {guild_id}")
-                    else:
-                        logger.warning("3. No main guild ID configured in settings")
-
-                    # For each other guild, also sync directly
-                    logger.info("5. Syncing to all connected guilds:")
-                    for guild in self.guilds:
-                        # Skip if this is the main guild we already processed
-                        if guild_id and int(guild_id) == guild.id:
-                            logger.info(
-                                f"   - Skipping main guild {guild.name} (already processed)"
-                            )
-                            continue
-
-                        try:
-                            logger.info(
-                                f"   - Syncing to guild: {guild.name} ({guild.id})"
-                            )
-                            guild_commands = await self.tree.sync(guild=guild)
-                            logger.info(f"     Synced {len(guild_commands)} commands")
-                        except Exception as e:
-                            logger.error(
-                                f"     Failed to sync to guild {guild.name}: {e}"
-                            )
-
-                    self.initial_sync_done = True
-                    logger.info("===== COMMAND SYNC PROCESS COMPLETE =====")
-
-                    # Final report - check global commands one more time
-                    final_commands = await self.tree.fetch_commands()
-                    logger.info(
-                        f"Final check: {len(final_commands)} global commands available"
-                    )
-
-                    # Verify the commands were registered
-                    all_commands = await self.tree.fetch_commands()
-                    command_names = ", ".join([cmd.name for cmd in all_commands])
-                    logger.info(
-                        f"Verified {len(all_commands)} global commands: {command_names}"
-                    )
-
-                    # Add debug info about guild registrations
-                    logger.info("=== DEBUG: Guild Command Registration ===")
-                    for guild in self.guilds:
-                        try:
-                            guild_cmds = await self.tree.fetch_commands(guild=guild)
-                            cmd_list = ", ".join([c.name for c in guild_cmds])
-                            logger.info(
-                                f"Guild {guild.name}: {len(guild_cmds)} commands"
-                            )
-                            if guild_cmds:
-                                logger.info(f"Commands: {cmd_list}")
-                        except Exception as e:
-                            logger.error(f"Error fetching guild commands: {e}")
-
-                except Exception as e:
-                    logger.error(f"Failed to sync commands: {e}", exc_info=True)
+        # Start notification service
+        self.notification_service.start()
+        logger.info("Started notification service")
 
     async def on_error(self, event, *args, **kwargs):
         """Handle bot errors."""
@@ -411,6 +314,12 @@ class TaskManagerBot(commands.Bot):
     async def close(self):
         """Clean shutdown."""
         logger.info("Shutting down bot...")
+
+        # Stop notification service
+        if hasattr(self, "notification_service"):
+            self.notification_service.stop()
+            logger.info("Stopped notification service")
+
         await close_database()
         await super().close()
 

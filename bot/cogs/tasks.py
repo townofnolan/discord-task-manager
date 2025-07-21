@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import discord
@@ -174,6 +174,17 @@ class CreateTaskModal(discord.ui.Modal, title="Create New Task"):
                 mentions = re.findall(r"<@!?(\d+)>", self.assignees.value)
                 assignee_discord_ids = [int(mention) for mention in mentions]
 
+            # Log task creation attempt with parameters
+            logger.info(
+                f"Attempting to create task with title: {self.task_title.value}"
+            )
+            logger.info(f"Creator ID: {interaction.user.id}")
+            logger.info(f"Project ID: {self.project_id}")
+            logger.info(f"Priority: {priority}")
+            logger.info(f"Assignee IDs: {assignee_discord_ids}")
+            logger.info(f"Due Date: {due_date}")
+            logger.info(f"Channel ID: {interaction.channel_id}")
+
             # Create task
             task = await TaskService.create_task(
                 title=self.task_title.value,
@@ -200,11 +211,12 @@ class CreateTaskModal(discord.ui.Modal, title="Create New Task"):
             message = await interaction.original_response()
             # Convert SQLAlchemy Column to Python int
             await TaskService.update_task(task_id, discord_message_id=message.id)
+            logger.info(f"Task updated with message ID: {message.id}")
 
         except Exception as e:
-            logger.error(f"Error creating task: {e}")
+            logger.error(f"Error creating task: {e}", exc_info=True)
             await interaction.response.send_message(
-                "❌ Failed to create task. Please try again.", ephemeral=True
+                f"❌ Failed to create task: {str(e)}", ephemeral=True
             )
 
 
@@ -554,6 +566,187 @@ class TasksCog(commands.Cog):
 
         view = ModalView()
         await ctx.send("Click the button to create a new task:", view=view)
+
+    @app_commands.command(name="recurring-task", description="Create a recurring task")
+    @app_commands.describe(
+        title="Title of the task",
+        pattern="Recurrence pattern (daily, weekly, monthly)",
+        frequency="How often the task should recur (e.g., 1 for every day, 2 for every other day)",
+        description="Description of the task",
+        assignee="User to assign the task to",
+        due_date="Due date (YYYY-MM-DD)",
+        priority="Task priority",
+        end_date="End date for recurring task (YYYY-MM-DD)",
+    )
+    @app_commands.choices(
+        pattern=[
+            app_commands.Choice(name="Daily", value="daily"),
+            app_commands.Choice(name="Weekly", value="weekly"),
+            app_commands.Choice(name="Monthly", value="monthly"),
+        ],
+        priority=[
+            app_commands.Choice(name="Low", value="low"),
+            app_commands.Choice(name="Medium", value="medium"),
+            app_commands.Choice(name="High", value="high"),
+            app_commands.Choice(name="Urgent", value="urgent"),
+        ],
+    )
+    async def create_recurring_task(
+        self,
+        interaction: discord.Interaction,
+        title: str,
+        pattern: str,
+        frequency: int = 1,
+        description: Optional[str] = None,
+        assignee: Optional[discord.Member] = None,
+        due_date: Optional[str] = None,
+        priority: Optional[str] = "medium",
+        end_date: Optional[str] = None,
+    ):
+        """Create a recurring task."""
+        # Parse due date if provided
+        due_date_obj = None
+        if due_date:
+            try:
+                due_date_obj = datetime.strptime(due_date, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                await interaction.response.send_message(
+                    "❌ Invalid due date format. Please use YYYY-MM-DD.", ephemeral=True
+                )
+                return
+
+        # Parse end date if provided
+        end_date_obj = None
+        if end_date:
+            try:
+                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                await interaction.response.send_message(
+                    "❌ Invalid end date format. Please use YYYY-MM-DD.", ephemeral=True
+                )
+                return
+
+        # Get assignee discord ID if provided
+        assignee_discord_ids = []
+        if assignee:
+            assignee_discord_ids.append(assignee.id)
+
+        # Create the task
+        try:
+            task = await TaskService.create_recurring_task(
+                title=title,
+                creator_discord_id=interaction.user.id,
+                description=description,
+                priority=priority,
+                assignee_discord_ids=assignee_discord_ids,
+                due_date=due_date_obj,
+                discord_channel_id=interaction.channel_id,
+                recurrence_pattern=pattern,
+                recurrence_frequency=frequency,
+                recurrence_end_date=end_date_obj,
+            )
+
+            embed = create_task_embed(task)
+            view = TaskView(task.id)
+
+            await interaction.response.send_message(
+                "✅ Recurring task created successfully!", embed=embed, view=view
+            )
+        except Exception as e:
+            logger.error(f"Error creating recurring task: {e}", exc_info=True)
+            await interaction.response.send_message(
+                f"❌ Failed to create recurring task: {str(e)}", ephemeral=True
+            )
+
+    @app_commands.command(
+        name="quick-task", description="Create a task quickly with simple syntax"
+    )
+    @app_commands.describe(
+        task_text="Task description with optional parameters (e.g., Buy groceries @user #high by tomorrow)"
+    )
+    async def quick_task(self, interaction: discord.Interaction, task_text: str):
+        """Create a task quickly with a natural language command."""
+        # Parse the task text
+        title = task_text
+        description = None
+        assignee_discord_ids = []
+        due_date = None
+        priority = TaskPriority.MEDIUM.value
+
+        # Extract mentions
+        mention_pattern = r"<@!?(\d+)>"
+        mentions = re.findall(mention_pattern, task_text)
+        if mentions:
+            assignee_discord_ids = [int(mention) for mention in mentions]
+            # Remove mentions from title
+            title = re.sub(mention_pattern, "", title).strip()
+
+        # Extract priority
+        priority_pattern = r"#(urgent|high|medium|low)"
+        priority_match = re.search(priority_pattern, title, re.IGNORECASE)
+        if priority_match:
+            priority = priority_match.group(1).lower()
+            # Remove priority from title
+            title = re.sub(priority_pattern, "", title, flags=re.IGNORECASE).strip()
+
+        # Extract due date
+        due_date_patterns = [
+            (r"by\s+today", 0),
+            (r"by\s+tomorrow", 1),
+            (r"by\s+next\s+week", 7),
+            (r"by\s+(\d{4}-\d{2}-\d{2})", None),  # YYYY-MM-DD format
+        ]
+
+        for pattern, days in due_date_patterns:
+            match = re.search(pattern, title, re.IGNORECASE)
+            if match:
+                if days is not None:
+                    due_date = datetime.now(timezone.utc) + timedelta(days=days)
+                else:
+                    # Parse specific date
+                    date_str = match.group(1)
+                    try:
+                        due_date = datetime.strptime(date_str, "%Y-%m-%d").replace(
+                            tzinfo=timezone.utc
+                        )
+                    except ValueError:
+                        await interaction.response.send_message(
+                            f"❌ Invalid date format: {date_str}. Please use YYYY-MM-DD.",
+                            ephemeral=True,
+                        )
+                        return
+
+                # Remove due date from title
+                title = re.sub(pattern, "", title, flags=re.IGNORECASE).strip()
+                break
+
+        # Create the task
+        try:
+            task = await TaskService.create_task(
+                title=title,
+                creator_discord_id=interaction.user.id,
+                description=description,
+                priority=priority,
+                assignee_discord_ids=assignee_discord_ids,
+                due_date=due_date,
+                discord_channel_id=interaction.channel_id,
+            )
+
+            embed = create_task_embed(task)
+            view = TaskView(task.id)
+
+            await interaction.response.send_message(
+                "✅ Task created successfully!", embed=embed, view=view
+            )
+        except Exception as e:
+            logger.error(f"Error creating quick task: {e}", exc_info=True)
+            await interaction.response.send_message(
+                f"❌ Failed to create task: {str(e)}", ephemeral=True
+            )
 
 
 async def setup(bot):

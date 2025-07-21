@@ -12,27 +12,27 @@ This project has been refocused to create a Discord-based task manager for coupl
 
 ## Implementation Roadmap
 
-### Phase 1: Core Functionality (1-2 weeks)
+### Phase 1: Core Functionality
 - [x] Complete basic task creation, viewing, editing
 - [x] Implement assignment and status management
-- [ ] Add simple recurring tasks
-- [ ] Create quick commands for task management
-- [ ] Build daily schedule view
+- [x] Add simple recurring tasks
+- [x] Create quick commands for task management
+- [x] Build daily schedule view
 
-### Phase 2: Enhanced Usability (2-3 weeks)
-- [ ] Implement shared dashboard
+### Phase 2: Enhanced Usability
+- [x] Implement shared dashboard
 - [ ] Add categorization system
-- [ ] Build overdue task alerts
-- [ ] Create morning/evening summary notifications
-- [ ] Improve calendar view with task visualization
+- [x] Build overdue task alerts
+- [x] Create morning/evening summary notifications
+- [x] Improve calendar view with task visualization
 
-### Phase 3: Refinement (1-2 weeks)
+### Phase 3: Refinement
 - [ ] Add simple time tracking reports
 - [ ] Create basic task dependency tracking ("Blocked by", "Blocking")
 - [ ] Build quick filters and search
 - [ ] Implement basic export functionality (if needed)
 
-### Phase 4: Testing & Deployment (1 week)
+### Phase 4: Testing & Deployment
 - [ ] Test with real-world scenarios
 - [ ] Set up reliable hosting
 - [ ] Create simple backup system
