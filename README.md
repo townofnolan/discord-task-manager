@@ -15,6 +15,7 @@ A comprehensive Discord bot with Airtable-like task management functionality des
 ### Rich Discord UI
 - 🎛️ **Interactive Buttons**: Rich button interfaces for task management
 - 📋 **Modal Forms**: Form-based task creation and editing
+- 🎨 **Color Dropdowns**: Choose project colors from a predefined list
 - ⚡ **Reaction Updates**: Quick status updates via emoji reactions
 - 🧵 **Thread Organization**: Automatic thread creation for task discussions
 - 📊 **Rich Embeds**: Beautiful, informative task and project displays
@@ -259,6 +260,8 @@ For support and questions:
 1. Check the documentation above
 2. Review the GitHub issues
 3. Create a new issue with detailed information
+
+Additional UI details can be found in [docs/ui_design.md](docs/ui_design.md).
 
 ## 🔮 Roadmap
 

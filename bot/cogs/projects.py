@@ -1,7 +1,7 @@
 """Projects management cog for Discord bot."""
 
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime, timezone
 
 import discord
@@ -12,6 +12,15 @@ from services import ProjectService, TaskService
 from models import TaskStatus
 
 logger = logging.getLogger(__name__)
+
+# Predefined color options for projects
+COLOR_OPTIONS: Dict[str, str] = {
+    "Blue": "#3498db",
+    "Red": "#e74c3c",
+    "Green": "#2ecc71",
+    "Purple": "#9b59b6",
+    "Orange": "#e67e22",
+}
 
 
 class ProjectView(discord.ui.View):
@@ -114,37 +123,20 @@ class CreateProjectModal(discord.ui.Modal, title="Create New Project"):
         max_length=2000
     )
     
-    color = discord.ui.TextInput(
-        label="Color (Hex)",
-        placeholder="#3498db",
-        required=False,
-        default="#3498db",
-        max_length=7
-    )
     
     async def on_submit(self, interaction: discord.Interaction):
         """Handle modal submission."""
         try:
-            # Validate color
-            color = self.color.value
-            if not color.startswith('#') or len(color) != 7:
-                color = "#3498db"
-            
-            # Create project
-            project = await ProjectService.create_project(
-                name=self.project_name.value,
+            view = ColorSelectView(
+                project_name=self.project_name.value,
                 description=self.description.value if self.description.value else None,
-                discord_channel_id=interaction.channel_id,
-                color=color
+                creator_id=interaction.user.id,
             )
-            
-            # Add creator as member
-            await ProjectService.add_member_to_project(project.id, interaction.user.id)
-            
-            # Create embed
-            embed = create_project_embed(project)
-            
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(
+                "Select a color for the project:",
+                view=view,
+                ephemeral=True,
+            )
             
         except Exception as e:
             logger.error(f"Error creating project: {e}")
@@ -274,6 +266,47 @@ class AddMemberModal(discord.ui.Modal, title="Add Project Member"):
             )
 
 
+class ColorSelectView(discord.ui.View):
+    """View for selecting a project color."""
+
+    def __init__(self, project_name: str, description: Optional[str], creator_id: int):
+        super().__init__(timeout=60)
+        self.project_name = project_name
+        self.description = description
+        self.creator_id = creator_id
+
+        options = [
+            discord.SelectOption(label=name, value=hex_code)
+            for name, hex_code in COLOR_OPTIONS.items()
+        ]
+        self.add_item(ColorSelect(options))
+
+
+class ColorSelect(discord.ui.Select):
+    def __init__(self, options: List[discord.SelectOption]):
+        super().__init__(placeholder="Choose a color...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: ColorSelectView = self.view  # type: ignore
+        selected_color = self.values[0]
+        try:
+            project = await ProjectService.create_project(
+                name=view.project_name,
+                description=view.description,
+                discord_channel_id=interaction.channel_id,
+                color=selected_color,
+            )
+            await ProjectService.add_member_to_project(project.id, view.creator_id)
+            embed = create_project_embed(project)
+            await interaction.response.edit_message(content=None, embed=embed, view=None)
+        except Exception as e:
+            logger.error(f"Error creating project: {e}")
+            await interaction.response.send_message(
+                "❌ Failed to create project. Please try again.",
+                ephemeral=True,
+            )
+
+
 class ProjectsCog(commands.Cog):
     """Cog for project management commands."""
     
@@ -287,14 +320,20 @@ class ProjectsCog(commands.Cog):
     @app_commands.describe(
         name="Project name",
         description="Project description",
-        color="Project color (hex code)"
+        color="Project color"
+    )
+    @app_commands.choices(
+        color=[
+            app_commands.Choice(name=name, value=hex_code)
+            for name, hex_code in COLOR_OPTIONS.items()
+        ]
     )
     async def create_project(
         self,
         interaction: discord.Interaction,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        color: Optional[str] = None
+        color: Optional[app_commands.Choice[str]] = None
     ):
         """Create a new project via slash command."""
         # If name is not provided, show the modal
@@ -304,18 +343,14 @@ class ProjectsCog(commands.Cog):
             return
         
         try:
-            # Validate color
-            if color and (not color.startswith('#') or len(color) != 7):
-                color = "#3498db"
-            elif not color:
-                color = "#3498db"
+            selected_color = color.value if color else "#3498db"
             
             # Create project
             project = await ProjectService.create_project(
                 name=name,
                 description=description,
                 discord_channel_id=interaction.channel_id,
-                color=color
+                color=selected_color
             )
             
             # Add creator as member
