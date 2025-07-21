@@ -1,11 +1,10 @@
 """Test configuration and fixtures."""
 
-import pytest
 import asyncio
 from unittest.mock import AsyncMock
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from utils.database import AsyncSessionLocal
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.fixture(scope="session")
@@ -28,25 +27,33 @@ async def db_session():
 @pytest.fixture
 def mock_discord_user():
     """Mock Discord user for testing."""
+
     class MockUser:
         def __init__(self, id=12345, username="testuser"):
             self.id = id
             self.username = username
             self.display_name = "Test User"
-    
+
     return MockUser()
 
 
 @pytest.fixture
 def mock_discord_interaction():
     """Mock Discord interaction for testing."""
+
     class MockInteraction:
         def __init__(self, user=None, channel_id=67890):
-            self.user = user or MockUser()
+            class TempUser:
+                def __init__(self):
+                    self.id = 12345
+                    self.username = "testuser"
+                    self.display_name = "Test User"
+
+            self.user = user or TempUser()
             self.channel_id = channel_id
             self.guild_id = 11111
-        
+
         async def response(self):
             return AsyncMock()
-    
+
     return MockInteraction()

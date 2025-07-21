@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+
 from bot.main import main
 
 if __name__ == "__main__":
